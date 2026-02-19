@@ -13,6 +13,7 @@ import asyncio
 import logging
 import yaml
 import sys
+import os
 from caproto import ChannelType
 from caproto.server import PVGroup, ioc_arg_parser, run, pvproperty
 from caproto.asyncio.client import Context
@@ -25,6 +26,10 @@ logger = logging.getLogger('MonitorIOC')
 
 def load_config(config_path='config.yaml'):
     """Load the configuration file."""
+    if not os.path.exists(config_path):
+        logger.error(f"Missing Config: {config_path} not found")
+        sys.exit(1)
+
     try:
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
@@ -181,8 +186,13 @@ def create_monitor_ioc_class(target_pvs):
 
             current_value = self.target_values.get(target)
 
-            if is_enabled and current_value is not None:
-                if current_value < low_limit or current_value > high_limit:
+            if is_enabled:
+                if current_value is None:
+                    # Fail-Safe: Enabled but disconnected/unknown -> Alarm
+                    all_ok = False
+                    logger.info(f"Alarm on {target}: Disconnected/No Value")
+                    break
+                elif current_value < low_limit or current_value > high_limit:
                     all_ok = False
                     logger.info(f"Alarm on {target}: Val={current_value} (Limits: {low_limit}-{high_limit})")
                     break
