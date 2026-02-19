@@ -1,0 +1,4 @@
+target_pvs:
+  - "MOCK:TEMP:A"
+  - "MOCK:TEMP:B"
+  - "MOCK:PRESSURE:A"

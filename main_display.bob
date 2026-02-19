@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<display version="2.0.0">
+  <name>PVwatcher Main Display</name>
+  <width>800</width>
+  <height>600</height>
+  <widget type="label" version="2.0.0">
+    <name>Title</name>
+    <text>PVwatcher Monitor</text>
+    <x>20</x>
+    <y>10</y>
+    <width>300</width>
+    <height>40</height>
+    <font>
+      <font name="Header 1" family="Liberation Sans" style="BOLD" size="22.0">
+      </font>
+    </font>
+  </widget>
+  <widget type="group" version="2.0.0">
+    <name>MasterControl</name>
+    <x>20</x>
+    <y>60</y>
+    <width>760</width>
+    <height>80</height>
+    <style>3</style>
+    <transparent>true</transparent>
+    <widget type="label" version="2.0.0">
+      <name>Label_Master</name>
+      <text>Master Enable:</text>
+      <x>10</x>
+      <y>10</y>
+      <width>120</width>
+      <height>20</height>
+    </widget>
+    <widget type="bool_button" version="2.0.0">
+      <name>BooleanButton_Master</name>
+      <pv_name>MONITOR:MASTER_ENABLE</pv_name>
+      <x>140</x>
+      <y>5</y>
+      <width>80</width>
+      <height>30</height>
+    </widget>
+    <widget type="label" version="2.0.0">
+      <name>Label_Summary</name>
+      <text>Summary Status:</text>
+      <x>300</x>
+      <y>10</y>
+      <width>120</width>
+      <height>20</height>
+    </widget>
+    <widget type="led" version="2.0.0">
+      <name>LED_Summary</name>
+      <pv_name>MONITOR:SUMMARY_STATUS</pv_name>
+      <x>430</x>
+      <y>10</y>
+      <width>30</width>
+      <height>30</height>
+      <off_color>
+        <color name="Major" red="255" green="0" blue="0">
+        </color>
+      </off_color>
+      <on_color>
+        <color name="OK" red="0" green="255" blue="0">
+        </color>
+      </on_color>
+    </widget>
+  </widget>
+  <widget type="embedded" version="2.0.0">
+    <name>Embedded_MOCK_TEMP_A</name>
+    <file>row_template.bob</file>
+    <macros>
+      <PV>MOCK:TEMP:A</PV>
+    </macros>
+    <x>20</x>
+    <y>160</y>
+    <width>600</width>
+    <height>40</height>
+    <resize>2</resize>
+  </widget>
+  <widget type="embedded" version="2.0.0">
+    <name>Embedded_MOCK_TEMP_B</name>
+    <file>row_template.bob</file>
+    <macros>
+      <PV>MOCK:TEMP:B</PV>
+    </macros>
+    <x>20</x>
+    <y>210</y>
+    <width>600</width>
+    <height>40</height>
+    <resize>2</resize>
+  </widget>
+  <widget type="embedded" version="2.0.0">
+    <name>Embedded_MOCK_PRESSURE_A</name>
+    <file>row_template.bob</file>
+    <macros>
+      <PV>MOCK:PRESSURE:A</PV>
+    </macros>
+    <x>20</x>
+    <y>260</y>
+    <width>600</width>
+    <height>40</height>
+    <resize>2</resize>
+  </widget>
+</display>
