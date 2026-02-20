@@ -162,18 +162,10 @@ def create_monitor_ioc_class(target_pvs):
         else:
             master_enable = master_enable_override
 
-        # If Master Disable, reset SUMMARY and ALL STATUS PVs
         if master_enable == 0:
             if self.summary_status.value != 1:
                 logger.info("Master disabled. Setting SUMMARY_STATUS to 1.")
                 await self.summary_status.write(1)
-
-            # Also reset individual status PVs to OK (1)
-            for target in self.target_pvs_list:
-                attr_suffix = target.replace(':', '_')
-                status_pv = getattr(self, f"{attr_suffix}_status", None)
-                if status_pv and status_pv.value != 1:
-                    await status_pv.write(1)
             return
 
         all_ok = True
@@ -187,7 +179,6 @@ def create_monitor_ioc_class(target_pvs):
             enable_pv = getattr(self, f"{attr_suffix}_enable")
             low_pv = getattr(self, f"{attr_suffix}_low")
             high_pv = getattr(self, f"{attr_suffix}_high")
-            status_pv = getattr(self, f"{attr_suffix}_status") # We assume it exists now
 
             is_enabled = enable_pv.value
             low_limit = low_pv.value
@@ -195,23 +186,16 @@ def create_monitor_ioc_class(target_pvs):
 
             current_value = self.target_values.get(target)
 
-            target_ok = True
             if is_enabled:
                 if current_value is None:
                     # Fail-Safe: Enabled but disconnected/unknown -> Alarm
-                    target_ok = False
+                    all_ok = False
                     logger.info(f"Alarm on {target}: Disconnected/No Value")
+                    break
                 elif current_value < low_limit or current_value > high_limit:
-                    target_ok = False
+                    all_ok = False
                     logger.info(f"Alarm on {target}: Val={current_value} (Limits: {low_limit}-{high_limit})")
-
-            # Update individual status PV
-            new_target_status = 1 if target_ok else 0
-            if status_pv.value != new_target_status:
-                await status_pv.write(new_target_status)
-
-            if not target_ok:
-                all_ok = False
+                    break
 
         new_status = 1 if all_ok else 0
         if self.summary_status.value != new_status:
@@ -252,10 +236,6 @@ def create_monitor_ioc_class(target_pvs):
         p_high = pvproperty(value=100.0, name=f'{target}:HIGH', dtype=ChannelType.DOUBLE)
         p_high = p_high.putter(generic_putter)
         class_dict[f"{attr_suffix}_high"] = p_high
-
-        # STATUS (Read-only, updated by IOC logic)
-        p_status = pvproperty(value=1, name=f'{target}:STATUS', dtype=ChannelType.INT, read_only=True)
-        class_dict[f"{attr_suffix}_status"] = p_status
 
     DynamicMonitorIOC = type('DynamicMonitorIOC', (PVGroup,), class_dict)
 
