@@ -85,7 +85,7 @@ python generate_gui.py
 
 * **Network Interface:** If running on a machine with multiple interfaces, set the EPICS environment variable before starting the IOC:
   ```bash
-export EPICS_CAS_INTF_ADDR_LIST=127.0.0.1  # Replace with your specific IP
+  export EPICS_CAS_INTF_ADDR_LIST=127.0.0.1  # Replace with your specific IP
   ```
 
 
@@ -95,7 +95,7 @@ export EPICS_CAS_INTF_ADDR_LIST=127.0.0.1  # Replace with your specific IP
 * **Macros Not Resolving:** Ensure `row_template.bob` is in the same directory as `main.bob`.
 * **Conda Dependencies:** If `generate_gui.py` fails, ensure `PyYAML` is installed:
   ```bash
-conda install pyyaml
+  conda install pyyaml
   ```
 
 
