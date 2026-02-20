@@ -41,3 +41,34 @@ pip install -r requirements.txt
   - `MOCK:TEMP:A:ENABLE`
   - `MOCK:TEMP:A:LOW`
   - `MOCK:TEMP:A:HIGH`
+
+
+ ## 🖥️ Graphical User Interface (CS-Studio)
+
+The PVwatcher UI is designed for **CS-Studio Phoebus** using a template-driven architecture. This allows the interface to scale automatically based on your configuration.
+
+### 1. UI Architecture
+* **`row_template.bob`**: The master UI component for a single monitoring row. It uses the `$(PV)` macro to map values.
+* **`main.bob`**: The top-level display (Auto-generated).
+* **`generate_gui.py`**: A utility script that syncs `config.yaml` with the GUI.
+
+### 2. UI Mapping Logic
+Each row in the GUI maps the following based on the `config.yaml` entry:
+
+| Widget | PV Suffix | Function |
+| :--- | :--- | :--- |
+| **LED** | `:STATUS` | **Green (1):** OK | **Red (0):** Alarm/Disconnected |
+| **Text Update** | *None* | Displays the live value of the monitored PV. |
+| **Text Input** | `:LOW` | Sets the inclusive lower bound. |
+| **Text Input** | `:HIGH` | Sets the inclusive upper bound. |
+| **Slide Switch** | `:ENABLE` | Toggles monitoring logic for this specific PV. |
+
+### 3. Generating the Display
+Whenever you modify the `pvs:` list in `config.yaml`, run the generator script to update the master display:
+
+```bash
+# Ensure your Conda environment is active
+conda activate pvwatcher-env
+
+# Generate the main.bob file
+python generate_gui.py
