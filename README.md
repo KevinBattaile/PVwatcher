@@ -72,8 +72,6 @@ conda activate pvwatcher-env
 
 # Generate the main.bob file
 python generate_gui.py
-
-
 ```
 
 ## 🛠️ Troubleshooting (RHEL 8 & Conda)
@@ -83,7 +81,6 @@ python generate_gui.py
   ```bash
   sudo firewall-cmd --add-port=5064/udp --add-port=5065/udp --permanent
   sudo firewall-cmd --reload
-
 ```
 
 * **Network Interface:** If running on a machine with multiple interfaces, set the EPICS environment variable before starting the IOC:
@@ -100,7 +97,6 @@ export EPICS_CAS_INTF_ADDR_LIST=127.0.0.1  # Replace with your specific IP
 * **Conda Dependencies:** If `generate_gui.py` fails, ensure `PyYAML` is installed:
 ```bash
 conda install pyyaml
-
 ```
 
 
@@ -108,6 +104,4 @@ conda install pyyaml
 ### Fail-Safe Logic
 
 If `ENABLE` is set to `True` but the target PV is disconnected (returning `None`), the `:STATUS` PV will automatically drop to `0` (Alarm), triggering the Red LED in the GUI.
-
-```
 
