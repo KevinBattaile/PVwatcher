@@ -74,9 +74,8 @@ conda activate pvwatcher-env
 python generate_gui.py
 
 
-Understood. Here is the **Troubleshooting** section as a single, clean Markdown block for you to copy and paste:
+```
 
-```markdown
 ## 🛠️ Troubleshooting (RHEL 8 & Conda)
 
 ### PVs are Disconnected (White/Grey in UI)
