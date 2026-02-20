@@ -72,3 +72,43 @@ conda activate pvwatcher-env
 
 # Generate the main.bob file
 python generate_gui.py
+
+
+Understood. Here is the **Troubleshooting** section as a single, clean Markdown block for you to copy and paste:
+
+```markdown
+## 🛠️ Troubleshooting (RHEL 8 & Conda)
+
+### PVs are Disconnected (White/Grey in UI)
+* **Firewall Configuration:** RHEL 8 blocks EPICS ports by default. Open them using:
+  ```bash
+  sudo firewall-cmd --add-port=5064/udp --add-port=5065/udp --permanent
+  sudo firewall-cmd --reload
+
+```
+
+* **Network Interface:** If running on a machine with multiple interfaces, set the EPICS environment variable before starting the IOC:
+```bash
+export EPICS_CAS_INTF_ADDR_LIST=127.0.0.1  # Replace with your specific IP
+
+```
+
+
+
+### GUI Issues
+
+* **Macros Not Resolving:** Ensure `row_template.bob` is in the same directory as `main.bob`.
+* **Conda Dependencies:** If `generate_gui.py` fails, ensure `PyYAML` is installed:
+```bash
+conda install pyyaml
+
+```
+
+
+
+### Fail-Safe Logic
+
+If `ENABLE` is set to `True` but the target PV is disconnected (returning `None`), the `:STATUS` PV will automatically drop to `0` (Alarm), triggering the Red LED in the GUI.
+
+```
+
