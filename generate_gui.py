@@ -14,7 +14,7 @@ def generate_bob():
 
     with open(CONFIG_FILE, 'r') as f:
         config = yaml.safe_load(f)
-        pv_list = config.get('pvs', [])
+        pv_list = config.get('target_pvs', [])
 
     # Header for Phoebus Display Builder XML
     xml_content = [
