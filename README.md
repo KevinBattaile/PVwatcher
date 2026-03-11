@@ -1,106 +1,79 @@
-# PVWatcher
+# PVwatcher
 
-A robust EPICS IOC for monitoring external PVs and setting alarms.
+PVwatcher is a highly robust, fault-tolerant EPICS Input/Output Controller (IOC) and dashboard generator built with Python and `caproto`. It actively monitors beamline Process Variables (PVs) against configurable high and low limits, providing real-time visual interlocking status through a dynamically generated Phoebus interface.
 
-## Features
+## Core Features
 
-- **Dynamic Configuration**: Loads target PVs from `config.yaml`.
-- **Fail-Safe Monitoring**: Monitors external PVs and sets `SUMMARY_STATUS` to 0 (Alarm) if any value is out of bounds or disconnected.
-- **Master Control**: `MONITOR:MASTER_ENABLE` allows global enabling/disabling of the monitoring logic.
-- **Python 3.6 Compatibility**: Uses `asyncio.ensure_future` and standard Python 3.6 features.
-- **Caproto Based**: Uses `caproto` server and async client.
+* **Dynamic GUI Generation:** Phoebus displays (`.bob` files) are automatically built from a simple YAML configuration file, ensuring the UI always perfectly matches the backend logic.
+* **3-State Logic:** Supports independent Row and Master System toggles. Statuses are evaluated as `State 1` (Green/OK), `State 0` (Red/Fault), or `State 2` (Grey/Bypassed).
+* **Fault-Tolerant Asynchronous Polling:** Built to survive network drops, disconnected PVs, and data-type mismatches without crashing background tasks.
+* **Pure Integer ENUM Handling:** Guarantees absolute memory stability between the Phoebus GUI and the Caproto IOC.
 
-## Requirements
+---
 
-- Python 3.6+
-- caproto
-- pyyaml
+## Installation & Setup
 
-Install dependencies:
+It is recommended to run PVwatcher inside an isolated environment.
+
 ```bash
+# Clone the repository
+git clone git@github.com:KevinBattaile/PVwatcher.git
+cd PVwatcher
+
+# Create and activate a conda environment
+conda create -n pvwatcher python=3.12
+conda activate pvwatcher
+
+# Install the required dependencies
 pip install -r requirements.txt
 ```
 
-## Usage
+---
 
-1. **Configure**: Edit `config.yaml` to list the PVs you want to monitor.
-2. **Run**:
-   ```bash
-   python3 monitor_ioc.py --list-pvs
-   ```
-3. **Control**:
-   - `[TARGET]:ENABLE` (1/0): Enable/Disable monitoring for specific PV.
-   - `[TARGET]:LOW` / `[TARGET]:HIGH`: Set bounds.
-   - `MONITOR:MASTER_ENABLE` (1/0): Master switch.
+## 1. Configuration (`config.yaml`)
 
-## PVs Provided
+All system settings, PV targets, and descriptions are defined in `config.yaml`. 
 
-- `MONITOR:MASTER_ENABLE` (Binary)
-- `MONITOR:SUMMARY_STATUS` (Binary, 1=OK, 0=ALARM)
-- For each target `MOCK:TEMP:A`:
-  - `MOCK:TEMP:A:ENABLE`
-  - `MOCK:TEMP:A:LOW`
-  - `MOCK:TEMP:A:HIGH`
+**Important:** The `prefix` must be wrapped in double quotes so the YAML parser does not misinterpret EPICS separators like `:` or `-`.
 
+```yaml
+prefix: "XF:19ID-MONITOR:"
 
- ## 🖥️ Graphical User Interface (CS-Studio)
-
-The PVwatcher UI is designed for **CS-Studio Phoebus** using a template-driven architecture. This allows the interface to scale automatically based on your configuration.
-
-### 1. UI Architecture
-* **`row_template.bob`**: The master UI component for a single monitoring row. It uses the `$(PV)` macro to map values.
-* **`main.bob`**: The top-level display (Auto-generated).
-* **`generate_gui.py`**: A utility script that syncs `config.yaml` with the GUI.
-
-### 2. UI Mapping Logic
-Each row in the GUI maps the following based on the `config.yaml` entry:
-
-| Widget | PV Suffix | Function |
-| :--- | :--- | :--- |
-| **LED** | `:STATUS` | **Green (1):** OK | **Red (0):** Alarm/Disconnected |
-| **Text Update** | *None* | Displays the live value of the monitored PV. |
-| **Text Input** | `:LOW` | Sets the inclusive lower bound. |
-| **Text Input** | `:HIGH` | Sets the inclusive upper bound. |
-| **Slide Switch** | `:ENABLE` | Toggles monitoring logic for this specific PV. |
-
-### 3. Generating the Display
-Whenever you modify the `pvs:` list in `config.yaml`, run the generator script to update the master display:
-
-```bash
-# Ensure your Conda environment is active
-conda activate pvwatcher-env
-
-# Generate the main.bob file
-python generate_gui.py
+target_pvs:
+  "XF19IDC-ES{Rbt:1}LN2:Lvl-I": "Robot Dewar Level"
+  "SR:OPS-BI{DCCT:1}I:Real-I": "Ring Current"
 ```
 
-## 🛠️ Troubleshooting (RHEL 8 & Conda)
+---
 
-### PVs are Disconnected (White/Grey in UI)
-* **Firewall Configuration:** RHEL 8 blocks EPICS ports by default. Open them using:
-  ```bash
-  sudo firewall-cmd --add-port=5064/udp --add-port=5065/udp --permanent
-  sudo firewall-cmd --reload
-  ```
+## 2. Generating the Phoebus GUI
 
-* **Network Interface:** If running on a machine with multiple interfaces, set the EPICS environment variable before starting the IOC:
-  ```bash
-  export EPICS_CAS_INTF_ADDR_LIST=127.0.0.1  # Replace with your specific IP
-  ```
+To prevent version control conflicts, the final `main.bob` dashboard is intentionally excluded from the repository. **Any time you clone this repository or update `config.yaml`, you must regenerate the dashboard.**
 
+Run the generator script:
+```bash
+python generate_gui.py
+```
+This script will read `config.yaml`, inject the specific PV names and descriptions into `row_template.bob`, and output a fresh `main.bob` file perfectly tailored to your current configuration.
 
+---
 
-### GUI Issues
+## 3. Running the IOC
 
-* **Macros Not Resolving:** Ensure `row_template.bob` is in the same directory as `main.bob`.
-* **Conda Dependencies:** If `generate_gui.py` fails, ensure `PyYAML` is installed:
-  ```bash
-  conda install pyyaml
-  ```
+Once the environment is active and the configuration is set, start the IOC:
 
+```bash
+python monitor_ioc.py
+```
 
+* On startup, the IOC will aggressively read the target PVs to jumpstart the network buffers.
+* Live values will be logged to the terminal as they arrive.
+* You can now open `main.bob` in Phoebus to interact with the system limits and bypass states.
 
-### Fail-Safe Logic
+---
 
-If `ENABLE` is set to `True` but the target PV is disconnected (returning `None`), the `:STATUS` PV will automatically drop to `0` (Alarm), triggering the Red LED in the GUI.
-
+## Repository Structure
+* `monitor_ioc.py`: The core Caproto server and logic engine.
+* `generate_gui.py`: The Python builder for the Phoebus XML parser.
+* `config.yaml`: The single-source-of-truth for PV prefixes and targets.
+* `row_template.bob`: The master XML template for individual PV rows.
