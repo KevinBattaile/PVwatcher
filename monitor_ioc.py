@@ -1,275 +1,236 @@
-#!/usr/bin/env python3
-"""
-Monitor IOC.
-
-This IOC loads a list of target PVs from a configuration file, creates local PVs
-to set bounds and enable monitoring for each target, and publishes a summary status.
-
-It uses caproto.server for the IOC and caproto.asyncio.client for monitoring
-external PVs.
-"""
-
 import asyncio
 import logging
 import yaml
-import sys
 import os
-from caproto import ChannelType
-from caproto.server import PVGroup, ioc_arg_parser, run, pvproperty
+import datetime
+from caproto.server import PVGroup, pvproperty, run
 from caproto.asyncio.client import Context
+from caproto import ChannelType
 
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('MonitorIOC')
+logger = logging.getLogger(__name__)
 
+# NSLS-II Network Tuning
+os.environ['EPICS_CAS_AUTO_BEACON_ADDR_LIST'] = 'no'
+os.environ['EPICS_CAS_BEACON_ADDR_LIST'] = '127.0.0.1'
 
 def load_config(config_path='config.yaml'):
-    """Load the configuration file."""
-    if not os.path.exists(config_path):
-        logger.error(f"Missing Config: {config_path} not found")
-        sys.exit(1)
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
-    try:
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        return config.get('target_pvs', [])
-    except Exception as e:
-        logger.error(f"Failed to load config: {e}")
-        sys.exit(1)
+CONFIG = load_config()
+TARGET_PVS = CONFIG.get('target_pvs', [])
 
+class PVRow(PVGroup):
+    # Initialize with 1 (Enable) so it starts natively as an integer
+    enable = pvproperty(
+        value=1, 
+        name=":ENABLE", 
+        dtype=ChannelType.ENUM,
+        enum_strings=["Disable", "Enable"]
+    )
+    low = pvproperty(value=-1e9, name=":LOW", dtype=float)
+    high = pvproperty(value=1e9, name=":HIGH", dtype=float)
+    status = pvproperty(value=1, name=":STATUS", dtype=int, read_only=True)
 
-def create_monitor_ioc_class(target_pvs):
-    """
-    Dynamically create the MonitorIOC class with PVs for each target.
-    
-    We construct the class dictionary first, then use `type()` to create the class.
-    This ensures that PVGroupMeta processes all pvproperty instances correctly.
-    """
-    
-    # Base attributes for the class
-    class_dict = {
-        '__module__': __name__,
-        'target_pvs_list': target_pvs,
-    }
-    
-    # -------------------------------------------------------------------------
-    # Define Methods
-    # -------------------------------------------------------------------------
-    
-    def __init__(self, *args, **kwargs):
-        super(type(self), self).__init__(*args, **kwargs)
-        self.target_values = {t: None for t in target_pvs}
-        self.client_context = None
-        self._monitored_pvs = []
-        self._monitor_tasks = []
+    def __init__(self, pv_name, parent, *args, **kwargs):
+        escaped = pv_name.replace('{', '{{').replace('}', '}}')
+        super().__init__(prefix=escaped, *args, **kwargs)
+        self.pv_name = pv_name
+        self.parent = parent
+
+    @enable.putter
+    async def enable(self, instance, value):
+        # Cleanly force whatever we receive into the integer index 0 or 1
+        if isinstance(value, bytes):
+            value = value.decode().strip('\x00')
         
-    class_dict['__init__'] = __init__
+        if str(value).upper() in ["0", "DISABLE"]:
+            clean_val = 0
+        else:
+            clean_val = 1
+            
+        async def delayed_trigger():
+            await asyncio.sleep(0.05)
+            await self.parent.trigger_logic(self.pv_name)
+        asyncio.create_task(delayed_trigger())
+        
+        # Return the raw integer to keep Caproto's memory perfect
+        return clean_val
 
-    # -------------------------------------------------------------------------
-    # Define Static PVs (Master Enable, Summary Status)
-    # -------------------------------------------------------------------------
-    
-    async def master_enable_putter(self, instance, value):
-        logger.info(f"Master Enable Changed to {value}")
-        await self._update_summary(master_enable_override=value)
+    @low.putter
+    async def low(self, instance, value):
+        async def delayed_trigger():
+            await asyncio.sleep(0.05)
+            await self.parent.trigger_logic(self.pv_name)
+        asyncio.create_task(delayed_trigger())
         return value
 
-    async def master_enable_startup(self, instance, async_lib):
-        logger.info("Starting monitoring client (asyncio)...")
-        # Create client context
-        self.client_context = Context()
-        
-        # Connect to targets
-        logger.info(f"Connecting to targets: {self.target_pvs_list}")
-        try:
-            pvs = await self.client_context.get_pvs(*self.target_pvs_list)
-            self._monitored_pvs = pvs  # Keep reference
-        except Exception as e:
-            logger.error(f"Failed to get PVs: {e}")
-            return
+    @high.putter
+    async def high(self, instance, value):
+        async def delayed_trigger():
+            await asyncio.sleep(0.05)
+            await self.parent.trigger_logic(self.pv_name)
+        asyncio.create_task(delayed_trigger())
+        return value
 
-        # Start monitoring loops
-        for pv in pvs:
-            logger.info(f"Subscribing to {pv.name}")
+class PVWatcherIOC(PVGroup):
+    # Initialize with 1 (SYSTEM ON)
+    master_enable = pvproperty(
+        value=1, 
+        name="MASTER_ENABLE", 
+        dtype=ChannelType.ENUM,
+        enum_strings=["SYSTEM OFF", "SYSTEM ON"]
+    )
+    summary_status = pvproperty(value=1, name="SUMMARY_STATUS", read_only=True, dtype=int)
+    last_update = pvproperty(value="Never", name="LAST_UPDATE", dtype=str, read_only=True)
+
+    def __init__(self, target_pvs, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.target_pvs = target_pvs
+        self.pv_data = {pv: {"value": None} for pv in target_pvs}
+        self.rows = {}
+        
+        for pv in target_pvs:
+            row = PVRow(pv_name=pv, parent=self)
+            self.rows[pv] = row
+            self.pvdb.update(row.pvdb)
+
+    @master_enable.putter
+    async def master_enable(self, instance, value):
+        if isinstance(value, bytes):
+            value = value.decode().strip('\x00')
             
-            # Read initial value to confirm connection
+        if str(value).upper() in ["0", "OFF", "SYSTEM OFF"]:
+            clean_val = 0
+        else:
+            clean_val = 1
+            
+        async def delayed_trigger():
+            await asyncio.sleep(0.05)
+            for pv_name in self.target_pvs:
+                await self.trigger_logic(pv_name)
+            await self.update_summary()
+        asyncio.create_task(delayed_trigger())
+        
+        return clean_val
+
+    async def trigger_logic(self, pv_name):
+        asyncio.get_running_loop().call_soon(
+            lambda: asyncio.create_task(self.update_logic(pv_name))
+        )
+
+    async def update_logic(self, pv_name):
+        row = self.rows[pv_name]
+        val = self.pv_data[pv_name]["value"]
+        
+        # 1. Math Evaluation (Bulletproof floats)
+        out_of_bounds = True
+        if val is not None:
             try:
-                initial_read = await pv.read()
+                num_val = float(val)
+                out_of_bounds = not (float(row.low.value) <= num_val <= float(row.high.value))
+            except Exception as e:
+                logger.error(f"Math Error on {pv_name}: {e}")
+                out_of_bounds = True
+
+        # 2. Check both strings AND integers to never get fooled by ENUMs again
+        master_off = self.master_enable.value in [0, "0", "SYSTEM OFF"]
+        row_off = row.enable.value in [0, "0", "Disable"]
+
+        # 3. Apply the 3-State Logic
+        if master_off or row_off:
+            new_status = 2  # State 2: Grey (Bypassed)
+        elif val is None or out_of_bounds:
+            new_status = 0  # State 0: Red (Fault)
+        else:
+            new_status = 1  # State 1: Green (OK)
+        
+        await row.status.write(new_status)
+        await self.update_summary()
+
+    async def update_summary(self):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await self.last_update.write(timestamp)
+
+        master_off = self.master_enable.value in [0, "0", "SYSTEM OFF"]
+        
+        if master_off:
+            await self.summary_status.write(2)
+            return
+        
+        overall = 1
+        for pv_name, row in self.rows.items():
+            row_on = row.enable.value in [1, "1", "Enable"]
+            
+            # ONLY check rows that are actively Enabled
+            if row_on:
+                val = self.pv_data[pv_name]["value"]
+                out_of_bounds = True
                 
-                # Update initial state
-                val = initial_read.data
-                try:
-                    if hasattr(val, '__iter__') and not isinstance(val, str):
-                        v = val[0]
-                    else:
-                        v = val
-                except Exception:
-                    v = val
-                self.target_values[pv.name] = v
+                if val is not None:
+                    try:
+                        out_of_bounds = not (float(row.low.value) <= float(val) <= float(row.high.value))
+                    except Exception:
+                        out_of_bounds = True
+
+                # Trip the master if data is missing or out of bounds
+                if val is None or out_of_bounds:
+                    overall = 0
+                    break
+                    
+        await self.summary_status.write(overall)
+
+    @summary_status.startup
+    async def summary_status(self, instance, async_lib):
+        self.client_ctx = Context()
+        self.subscriptions = []
+
+        for req_pv_name in self.target_pvs:
+            try:
+                found = await self.client_ctx.get_pvs(req_pv_name, timeout=2.0)
+                pv_obj = found[0]
+                
+                # A closure function guarantees we map the callback to the EXACT dictionary key
+                def make_callback(name_key):
+                    def callback(sub, response):
+                        try:
+                            val = response.data[0]
+                            logger.info(f"[{name_key}] Live Update Received: {val}")
+                            self.pv_data[name_key]["value"] = val
+                            asyncio.get_running_loop().create_task(self.update_logic(name_key))
+                        except Exception as e:
+                            logger.error(f"Callback error for {name_key}: {e}")
+                    return callback
+
+                sub = pv_obj.subscribe()
+                sub.add_callback(make_callback(req_pv_name))
+                self.subscriptions.append(sub)
+                
+                # >>> THE MAGIC FIX: Force an initial read to jumpstart the network buffer <<<
+                init_resp = await pv_obj.read()
+                val = init_resp.data[0]
+                self.pv_data[req_pv_name]["value"] = val
+                logger.info(f"[{req_pv_name}] Initial read successful: {val}")
                 
             except Exception as e:
-                logger.error(f"Failed to read initial value of {pv.name}: {e}")
-
-            # Create task for monitoring
-            # Use ensure_future for Python 3.6 compatibility
-            task = asyncio.ensure_future(self._monitor_loop(pv))
-            self._monitor_tasks.append(task)
-            
-            # Trigger initial summary update
-            await self._update_summary()
-            
-    master_enable_prop = pvproperty(value=1, name='MONITOR:MASTER_ENABLE', dtype=ChannelType.INT)
-    master_enable_prop = master_enable_prop.putter(master_enable_putter)
-    master_enable_prop = master_enable_prop.startup(master_enable_startup)
-    
-    class_dict['master_enable'] = master_enable_prop
-
-    summary_status_prop = pvproperty(value=1, name='MONITOR:SUMMARY_STATUS', dtype=ChannelType.INT, read_only=True)
-    class_dict['summary_status'] = summary_status_prop
-
-    # -------------------------------------------------------------------------
-    # Define Helper Methods
-    # -------------------------------------------------------------------------
-
-    async def _monitor_loop(self, pv):
-        """Async loop to monitor a single PV."""
-        logger.info(f"Starting monitor loop for {pv.name}")
-        sub = pv.subscribe(data_type='time')
-        
-        try:
-            async for response in sub:
-                val = response.data
-                try:
-                    if hasattr(val, '__iter__') and not isinstance(val, str):
-                        v = val[0]
-                    else:
-                        v = val
-                except Exception:
-                    v = val
+                logger.warning(f"Failed to connect or read {req_pv_name}: {e}")
                 
-                self.target_values[pv.name] = v
-                # logger.info(f"Update received for {pv.name}: {v}")
-                await self._update_summary()
-        except Exception as e:
-            logger.error(f"Monitor loop failed for {pv.name}: {e}")
-
-    class_dict['_monitor_loop'] = _monitor_loop
-
-    async def _update_summary(self, master_enable_override=None):
-        if master_enable_override is None:
-            master_enable = self.master_enable.value
-        else:
-            master_enable = master_enable_override
-
-        # If Master Disable, reset SUMMARY and ALL STATUS PVs
-        if master_enable == 0:
-            if self.summary_status.value != 1:
-                logger.info("Master disabled. Setting SUMMARY_STATUS to 1.")
-                await self.summary_status.write(1)
-            
-            # Also reset individual status PVs to OK (1)
-            for target in self.target_pvs_list:
-                attr_suffix = target.replace(':', '_')
-                status_pv = getattr(self, f"{attr_suffix}_status", None)
-                if status_pv and status_pv.value != 1:
-                    await status_pv.write(1)
-            return
-
-        all_ok = True
-        
-        for target in self.target_pvs_list:
-            attr_suffix = target.replace(':', '_')
-            
-            if not hasattr(self, f"{attr_suffix}_enable"):
-                continue
-
-            enable_pv = getattr(self, f"{attr_suffix}_enable")
-            low_pv = getattr(self, f"{attr_suffix}_low")
-            high_pv = getattr(self, f"{attr_suffix}_high")
-            status_pv = getattr(self, f"{attr_suffix}_status") # We assume it exists now
-            
-            is_enabled = enable_pv.value
-            low_limit = low_pv.value
-            high_limit = high_pv.value
-            
-            current_value = self.target_values.get(target)
-
-            target_ok = True
-            if is_enabled:
-                if current_value is None:
-                    # Fail-Safe: Enabled but disconnected/unknown -> Alarm
-                    target_ok = False
-                    logger.info(f"Alarm on {target}: Disconnected/No Value")
-                elif current_value < low_limit or current_value > high_limit:
-                    target_ok = False
-                    logger.info(f"Alarm on {target}: Val={current_value} (Limits: {low_limit}-{high_limit})")
-            
-            # Update individual status PV
-            new_target_status = 1 if target_ok else 0
-            if status_pv.value != new_target_status:
-                await status_pv.write(new_target_status)
-            
-            if not target_ok:
-                all_ok = False
-        
-        new_status = 1 if all_ok else 0
-        if self.summary_status.value != new_status:
-            logger.info(f"Updating SUMMARY_STATUS to {new_status}")
-            await self.summary_status.write(new_status)
-
-    class_dict['_update_summary'] = _update_summary
-
-    # -------------------------------------------------------------------------
-    # Define Dynamic PVs and Putters
-    # -------------------------------------------------------------------------
-    
-    async def generic_putter(group, instance, value):
-        logger.info(f"Generic putter called for {instance.name} with value {value}")
-        # Schedule update check
-        async def check_after():
-            await asyncio.sleep(0.01)
-            await group._update_summary()
-        
-        # Use ensure_future for 3.6 compatibility
-        asyncio.ensure_future(check_after())
-        return value
-
-    for target in target_pvs:
-        attr_suffix = target.replace(':', '_')
-        
-        # ENABLE
-        p_enable = pvproperty(value=1, name=f'{target}:ENABLE', dtype=ChannelType.INT)
-        p_enable = p_enable.putter(generic_putter)
-        class_dict[f"{attr_suffix}_enable"] = p_enable
-
-        # LOW
-        p_low = pvproperty(value=0.0, name=f'{target}:LOW', dtype=ChannelType.DOUBLE)
-        p_low = p_low.putter(generic_putter)
-        class_dict[f"{attr_suffix}_low"] = p_low
-
-        # HIGH
-        p_high = pvproperty(value=100.0, name=f'{target}:HIGH', dtype=ChannelType.DOUBLE)
-        p_high = p_high.putter(generic_putter)
-        class_dict[f"{attr_suffix}_high"] = p_high
-        
-        # STATUS (Read-only, updated by IOC logic)
-        p_status = pvproperty(value=1, name=f'{target}:STATUS', dtype=ChannelType.INT, read_only=True)
-        class_dict[f"{attr_suffix}_status"] = p_status
-
-    DynamicMonitorIOC = type('DynamicMonitorIOC', (PVGroup,), class_dict)
-    
-    return DynamicMonitorIOC
+        # Force a full logic evaluation across the board on startup
+        for pv_name in self.target_pvs:
+            await self.update_logic(pv_name)
 
 
-if __name__ == '__main__':
-    target_pvs = load_config()
-    IOCClass = create_monitor_ioc_class(target_pvs)
-    
-    ioc_options, run_options = ioc_arg_parser(
-        default_prefix='',
-        desc='Monitor IOC'
-    )
-    
-    ioc = IOCClass(**ioc_options)
-    run(ioc.pvdb, **run_options)
+if __name__ == "__main__":
+    if not TARGET_PVS:
+        logger.error("No PVs found in config.yaml")
+    else:
+        # Grab the custom prefix from your config file, default to 'MONITOR:' if missing
+        custom_prefix = CONFIG.get('prefix', 'MONITOR:')
+
+        # If TARGET_PVS is now a dictionary (for descriptions), just pass the keys
+        target_list = list(TARGET_PVS.keys()) if isinstance(TARGET_PVS, dict) else TARGET_PVS
+
+        ioc = PVWatcherIOC(target_pvs=target_list, prefix=custom_prefix)
+        logger.info(f"Starting PVwatcher with Prefix: {custom_prefix}")
+        run(ioc.pvdb)

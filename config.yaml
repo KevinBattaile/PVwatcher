@@ -1,4 +1,5 @@
+prefix: "XF:19ID-MONITOR:"
+
 target_pvs:
-  - "MOCK:TEMP:A"
-  - "MOCK:TEMP:B"
-  - "MOCK:PRESSURE:A"
+  "XF19IDC-ES{Rbt:1}LN2:Lvl-I": "Robot Dewar Level"
+  "SR:OPS-BI{DCCT:1}I:Real-I": "Ring Current"

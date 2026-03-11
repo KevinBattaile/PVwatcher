@@ -1,0 +1,11 @@
+# Exclude generated UI files
+main.bob
+main_display.bob
+
+# Exclude local startup scripts
+run_watcher.sh
+start_pvwatcher.sh
+
+# Exclude Python cache
+__pycache__/
+*.pyc
