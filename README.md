@@ -35,6 +35,8 @@ pip install -r requirements.txt
 
 All system settings, PV targets, persistent limits, and alert credentials are defined in `config.yaml`. This file acts as the single source of truth for the IOC's **boot-up state**.
 
+Two-state devices like shutters, should use an 'expected' statement instead of a low/high as in the example below. The value in expected is the OK/GO state. Any change will indicate a fault.
+
 **Important:** The `prefix` must be wrapped in double quotes so the YAML parser does not misinterpret EPICS separators like `:` or `-`.
 
 ```yaml
