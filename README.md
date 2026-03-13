@@ -4,11 +4,11 @@ PVwatcher is a highly robust, fault-tolerant EPICS Input/Output Controller (IOC)
 
 ## Core Features
 
-* **Persistent Configuration:** PV limits are hardcoded in a YAML file, ensuring your tuned boundaries survive server reboots.
+* **Persistent Configuration:** PV limits and default notification settings are hardcoded in a YAML file, ensuring your tuned boundaries survive server reboots.
 * **Dynamic GUI Generation:** Phoebus displays (`.bob` files) are automatically built from the configuration file, ensuring the UI always perfectly matches the backend logic.
 * **3-State Logic:** Supports independent Row and Master System toggles. Statuses are evaluated as `State 1` (Green/OK), `State 0` (Red/Fault), or `State 2` (Grey/Bypassed).
-* **Asynchronous Alerting:** Built-in Slack webhook and SMTP Email notifications run in background threads to alert users of faults without blocking live EPICS data. Includes state-tracking to prevent notification spam.
-* **Fault-Tolerant Polling:** Built to survive network drops, disconnected PVs, and data-type mismatches without crashing background tasks.
+* **Enriched Asynchronous Alerting:** Built-in Slack webhook and SMTP Email notifications run in background threads to alert users of faults without blocking live EPICS data. Alerts include both the human-readable description and the raw PV name. Includes state-tracking to prevent notification spam.
+* **Live Operator UI Routing:** Master alert toggles and 6 pre-allocated email slots allow control room operators to route alerts to current shift staff on the fly without restarting the IOC.
 
 ---
 
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 ## 1. Configuration (`config.yaml`)
 
-All system settings, PV targets, persistent limits, and alert credentials are defined in `config.yaml`. This file acts as the single source of truth.
+All system settings, PV targets, persistent limits, and alert credentials are defined in `config.yaml`. This file acts as the single source of truth for the IOC's **boot-up state**.
 
 **Important:** The `prefix` must be wrapped in double quotes so the YAML parser does not misinterpret EPICS separators like `:` or `-`.
 
@@ -51,11 +51,11 @@ target_pvs:
     high: 510.0
 
 slack_alerts:
-  enabled: false
+  enabled: true
   webhook_url: "[https://hooks.slack.com/services/YOUR/WEBHOOK/URL](https://hooks.slack.com/services/YOUR/WEBHOOK/URL)"
 
 email_alerts:
-  enabled: false
+  enabled: true
   smtp_server: "smtp.your-facility.gov"
   smtp_port: 25
   sender: "pvwatcher@your-facility.gov"
@@ -64,14 +64,11 @@ email_alerts:
     - "jules@your-facility.gov"
 ```
 
-* **`target_pvs`:** Each PV requires a nested dictionary containing a human-readable `desc` (Description) and the `low`/`high` alarm boundaries.
-* **`slack_alerts` & `email_alerts`:** Change `enabled` to `true` and fill in your network credentials to activate background alerting. The system will only notify you on state transitions (e.g., Green to Red) to prevent inbox spam.
-
 ---
 
 ## 2. Generating the Phoebus GUI
 
-To prevent version control conflicts, the final `main.bob` dashboard is intentionally excluded from the repository. **Any time you clone this repository or update limits in `config.yaml`, you must regenerate the dashboard.**
+To prevent version control conflicts, the final `main.bob` dashboard is intentionally excluded from the repository. **Any time you clone this repository or add new PVs to `config.yaml`, you must regenerate the dashboard.**
 
 Run the generator script:
 ```bash
@@ -81,7 +78,7 @@ This script will read `config.yaml`, inject the specific PV names and descriptio
 
 ---
 
-## 3. Running the IOC
+## 3. Running the IOC & Operator Usage
 
 Once the environment is active and the configuration is set, start the IOC:
 
@@ -89,13 +86,15 @@ Once the environment is active and the configuration is set, start the IOC:
 python monitor_ioc.py
 ```
 
-* On startup, the IOC will aggressively read the target PVs to jumpstart the network buffers and load the persistent limits from the YAML file.
-* You can now open `main.bob` in Phoebus to interact with the system limits and bypass states.
+### The Notification UI
+When the IOC boots, it loads the limits and the primary email recipients from `config.yaml`. Inside the Phoebus GUI (`main.bob`), operators have real-time control over alert routing:
+* **Master Toggles:** Slack and Email alerts can be independently disabled across the entire system.
+* **Recipient Slots:** The system pre-allocates 6 email slots. Slots 1 and 2 will default to the addresses in `config.yaml`. The remaining slots boot up blank and disabled, allowing shift operators to temporarily type in their own email addresses and enable them for the duration of their shift without needing to edit the YAML or restart the server.
 
 ---
 
 ## Repository Structure
 * `monitor_ioc.py`: The core Caproto server and logic engine.
 * `generate_gui.py`: The Python builder for the Phoebus XML parser.
-* `config.yaml`: The single-source-of-truth for PV prefixes, limits, and alerts.
+* `config.yaml`: The single-source-of-truth for PV prefixes, limits, and boot defaults.
 * `row_template.bob`: The master XML template for individual PV rows.
