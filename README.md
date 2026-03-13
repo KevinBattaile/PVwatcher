@@ -50,7 +50,7 @@ target_pvs:
     low: 490.0
     high: 510.0
   "XF:19ID-PPS{Sh:FE}Pos-Sts":
-    desc: "Front end shutter
+    desc: "Front end shutter"
     expected: 0
 
 slack_alerts:
