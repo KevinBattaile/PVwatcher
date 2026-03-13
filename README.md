@@ -49,6 +49,9 @@ target_pvs:
     desc: "Ring Current"
     low: 490.0
     high: 510.0
+  "XF:19ID-PPS{Sh:FE}Pos-Sts":
+    desc: "Front end shutter
+    expected: 0
 
 slack_alerts:
   enabled: true
