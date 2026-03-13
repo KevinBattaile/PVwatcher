@@ -196,10 +196,29 @@ class PVWatcherIOC(PVGroup):
         
         out_of_bounds = True
         if val is not None:
-            try:
-                out_of_bounds = not (float(row.low.value) <= float(val) <= float(row.high.value))
-            except Exception:
-                out_of_bounds = True
+            pv_info = self.target_pvs.get(pv_name, {})
+            
+            # --- Exact Text/State Matching ---
+            if isinstance(pv_info, dict) and 'expected' in pv_info:
+                expected_val = str(pv_info['expected']).strip().lower()
+                
+                # Safely decode Caproto byte strings if necessary
+                live_val = val
+                if isinstance(live_val, bytes):
+                    live_val = live_val.decode('utf-8', errors='ignore').strip('\x00')
+                
+                live_val = str(live_val).strip().lower()
+                out_of_bounds = (live_val != expected_val)
+                
+                # --- NEW DEBUG LINE ---
+                logger.info(f"[{pv_name}] MATCH CHECK | Live: '{live_val}' | Expected: '{expected_val}' | Faulted: {out_of_bounds}")
+                
+            # --- Numerical Bounds Checking ---
+            else:
+                try:
+                    out_of_bounds = not (float(row.low.value) <= float(val) <= float(row.high.value))
+                except Exception:
+                    out_of_bounds = True
 
         master_off = self.master_enable.value in [0, "0", "SYSTEM OFF"]
         row_off = row.enable.value in [0, "0", "Disable"]
@@ -210,9 +229,11 @@ class PVWatcherIOC(PVGroup):
             
         old_status = self.previous_states.get(pv_name)
         if old_status is not None and new_status != old_status:
+            
+            # Extract description for alerts
             pv_info = self.target_pvs.get(pv_name, {})
             desc = pv_info.get('desc', 'Unknown System') if isinstance(pv_info, dict) else str(pv_info)
-            
+
             alert_msg = None
             subject = None
             
@@ -234,11 +255,9 @@ class PVWatcherIOC(PVGroup):
                 email_on = self.email_enable.value in [1, "1", "Enable"]
                 email_cfg = CONFIG.get('email_alerts', {})
                 if email_on and email_cfg.get('smtp_server'):
-                    # Scan the live GUI slots for enabled email addresses
                     live_emails = []
                     for r in self.recipients:
                         if r.enable.value in [1, "1", "Enable"]:
-                            # Strip out EPICS string padding
                             addr = str(r.address.value).strip('\x00').strip()
                             if addr: live_emails.append(addr)
                     
@@ -287,32 +306,69 @@ class PVWatcherIOC(PVGroup):
     @summary_status.startup
     async def summary_status(self, instance, async_lib):
         self.client_ctx = Context()
+        self.polled_pvs = {}
         self.subscriptions = []
 
+        # 1. Establish the connections at boot
         for req_pv_name in self.target_pvs:
             try:
                 found = await self.client_ctx.get_pvs(req_pv_name, timeout=2.0)
                 pv_obj = found[0]
-                def make_callback(name_key):
-                    def callback(sub, response):
-                        try:
-                            self.pv_data[name_key]["value"] = response.data[0]
-                            asyncio.get_running_loop().create_task(self.update_logic(name_key))
-                        except Exception as e:
-                            logger.error(f"Callback error for {name_key}: {e}")
-                    return callback
-
-                sub = pv_obj.subscribe()
-                sub.add_callback(make_callback(req_pv_name))
-                self.subscriptions.append(sub)
-                init_resp = await pv_obj.read()
+                
+                # Do an initial read to populate the GUI immediately
+                init_resp = await pv_obj.read(timeout=1.0)
                 self.pv_data[req_pv_name]["value"] = init_resp.data[0]
+                await self.update_logic(req_pv_name)
                 
+                pv_info = self.target_pvs.get(req_pv_name, {})
+                
+                # 2. Sort into Polled (State/Expected) vs Subscribed (Numerical/Bounds)
+                if isinstance(pv_info, dict) and 'expected' in pv_info:
+                    # Add to the active polling list
+                    self.polled_pvs[req_pv_name] = pv_obj
+                    logger.info(f"[{req_pv_name}] Configured for Active Polling (State PV)")
+                else:
+                    # Setup native Caproto passive subscription
+                    def make_callback(name_key):
+                        def callback(sub, response):
+                            try:
+                                self.pv_data[name_key]["value"] = response.data[0]
+                                asyncio.get_running_loop().create_task(self.update_logic(name_key))
+                            except Exception as e:
+                                logger.error(f"Callback error for {name_key}: {e}")
+                        return callback
+
+                    sub = pv_obj.subscribe()
+                    sub.add_callback(make_callback(req_pv_name))
+                    self.subscriptions.append(sub)
+                    logger.info(f"[{req_pv_name}] Configured for Passive Subscription (Numeric PV)")
+                    
             except Exception as e:
-                logger.warning(f"Failed to connect or read {req_pv_name}: {e}")
+                logger.warning(f"Failed to connect to {req_pv_name}: {e}")
                 
-        for pv_name in self.target_pvs:
-            await self.update_logic(pv_name)
+        # 3. Start the Active Polling Loop ONLY for the state PVs
+        if self.polled_pvs:
+            async def poll_pvs():
+                while True:
+                    await asyncio.sleep(0.5)  # Scan twice a second
+                    for pv_name, pv_obj in self.polled_pvs.items():
+                        try:
+                            resp = await pv_obj.read(timeout=0.5)
+                            live_val = resp.data[0]
+                            
+                            # Only trigger the heavy logic if the physical value actually changed
+                            if self.pv_data[pv_name]["value"] != live_val:
+                                self.pv_data[pv_name]["value"] = live_val
+                                asyncio.create_task(self.update_logic(pv_name))
+                                
+                        except Exception:
+                            # If the network drops, set it to None to instantly trigger a Fault alert
+                            if self.pv_data[pv_name]["value"] is not None:
+                                self.pv_data[pv_name]["value"] = None
+                                asyncio.create_task(self.update_logic(pv_name))
+
+            # Launch the background loop
+            asyncio.create_task(poll_pvs())
 
 if __name__ == "__main__":
     if not TARGET_PVS:
