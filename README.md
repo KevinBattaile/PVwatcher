@@ -4,10 +4,11 @@ PVwatcher is a highly robust, fault-tolerant EPICS Input/Output Controller (IOC)
 
 ## Core Features
 
-* **Dynamic GUI Generation:** Phoebus displays (`.bob` files) are automatically built from a simple YAML configuration file, ensuring the UI always perfectly matches the backend logic.
+* **Persistent Configuration:** PV limits are hardcoded in a YAML file, ensuring your tuned boundaries survive server reboots.
+* **Dynamic GUI Generation:** Phoebus displays (`.bob` files) are automatically built from the configuration file, ensuring the UI always perfectly matches the backend logic.
 * **3-State Logic:** Supports independent Row and Master System toggles. Statuses are evaluated as `State 1` (Green/OK), `State 0` (Red/Fault), or `State 2` (Grey/Bypassed).
-* **Fault-Tolerant Asynchronous Polling:** Built to survive network drops, disconnected PVs, and data-type mismatches without crashing background tasks.
-* **Pure Integer ENUM Handling:** Guarantees absolute memory stability between the Phoebus GUI and the Caproto IOC.
+* **Asynchronous Alerting:** Built-in Slack webhook and SMTP Email notifications run in background threads to alert users of faults without blocking live EPICS data. Includes state-tracking to prevent notification spam.
+* **Fault-Tolerant Polling:** Built to survive network drops, disconnected PVs, and data-type mismatches without crashing background tasks.
 
 ---
 
@@ -32,7 +33,7 @@ pip install -r requirements.txt
 
 ## 1. Configuration (`config.yaml`)
 
-All system settings, PV targets, and descriptions are defined in `config.yaml`. 
+All system settings, PV targets, persistent limits, and alert credentials are defined in `config.yaml`. This file acts as the single source of truth.
 
 **Important:** The `prefix` must be wrapped in double quotes so the YAML parser does not misinterpret EPICS separators like `:` or `-`.
 
@@ -40,15 +41,37 @@ All system settings, PV targets, and descriptions are defined in `config.yaml`.
 prefix: "XF:19ID-MONITOR:"
 
 target_pvs:
-  "XF19IDC-ES{Rbt:1}LN2:Lvl-I": "Robot Dewar Level"
-  "SR:OPS-BI{DCCT:1}I:Real-I": "Ring Current"
+  "XF19IDC-ES{Rbt:1}LN2:Lvl-I":
+    desc: "Robot Dewar Level"
+    low: 20.0
+    high: 85.0
+  "SR:OPS-BI{DCCT:1}I:Real-I":
+    desc: "Ring Current"
+    low: 490.0
+    high: 510.0
+
+slack_alerts:
+  enabled: false
+  webhook_url: "[https://hooks.slack.com/services/YOUR/WEBHOOK/URL](https://hooks.slack.com/services/YOUR/WEBHOOK/URL)"
+
+email_alerts:
+  enabled: false
+  smtp_server: "smtp.your-facility.gov"
+  smtp_port: 25
+  sender: "pvwatcher@your-facility.gov"
+  recipients:
+    - "kbattaile@your-facility.gov"
+    - "jules@your-facility.gov"
 ```
+
+* **`target_pvs`:** Each PV requires a nested dictionary containing a human-readable `desc` (Description) and the `low`/`high` alarm boundaries.
+* **`slack_alerts` & `email_alerts`:** Change `enabled` to `true` and fill in your network credentials to activate background alerting. The system will only notify you on state transitions (e.g., Green to Red) to prevent inbox spam.
 
 ---
 
 ## 2. Generating the Phoebus GUI
 
-To prevent version control conflicts, the final `main.bob` dashboard is intentionally excluded from the repository. **Any time you clone this repository or update `config.yaml`, you must regenerate the dashboard.**
+To prevent version control conflicts, the final `main.bob` dashboard is intentionally excluded from the repository. **Any time you clone this repository or update limits in `config.yaml`, you must regenerate the dashboard.**
 
 Run the generator script:
 ```bash
@@ -66,8 +89,7 @@ Once the environment is active and the configuration is set, start the IOC:
 python monitor_ioc.py
 ```
 
-* On startup, the IOC will aggressively read the target PVs to jumpstart the network buffers.
-* Live values will be logged to the terminal as they arrive.
+* On startup, the IOC will aggressively read the target PVs to jumpstart the network buffers and load the persistent limits from the YAML file.
 * You can now open `main.bob` in Phoebus to interact with the system limits and bypass states.
 
 ---
@@ -75,5 +97,5 @@ python monitor_ioc.py
 ## Repository Structure
 * `monitor_ioc.py`: The core Caproto server and logic engine.
 * `generate_gui.py`: The Python builder for the Phoebus XML parser.
-* `config.yaml`: The single-source-of-truth for PV prefixes and targets.
+* `config.yaml`: The single-source-of-truth for PV prefixes, limits, and alerts.
 * `row_template.bob`: The master XML template for individual PV rows.

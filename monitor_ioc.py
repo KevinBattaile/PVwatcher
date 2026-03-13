@@ -65,12 +65,41 @@ class PVRow(PVGroup):
     high = pvproperty(value=1e9, name=":HIGH", dtype=float)
     status = pvproperty(value=1, name=":STATUS", dtype=int, read_only=True)
 
-    def __init__(self, pv_name, parent, *args, **kwargs):
+    def __init__(self, pv_name, parent, low_limit, high_limit, *args, **kwargs):
         escaped = pv_name.replace('{', '{{').replace('}', '}}')
         super().__init__(prefix=escaped, *args, **kwargs)
         self.pv_name = pv_name
         self.parent = parent
+        self._init_low = low_limit
+        self._init_high = high_limit
 
+    # --- LOW PROPERTY HOOKS ---
+    @low.startup
+    async def low(self, instance, async_lib):
+        await instance.write(self._init_low)
+
+    @low.putter
+    async def low(self, instance, value):
+        async def delayed_trigger():
+            await asyncio.sleep(0.05)
+            await self.parent.trigger_logic(self.pv_name)
+        asyncio.create_task(delayed_trigger())
+        return value
+
+    # --- HIGH PROPERTY HOOKS ---
+    @high.startup
+    async def high(self, instance, async_lib):
+        await instance.write(self._init_high)
+
+    @high.putter
+    async def high(self, instance, value):
+        async def delayed_trigger():
+            await asyncio.sleep(0.05)
+            await self.parent.trigger_logic(self.pv_name)
+        asyncio.create_task(delayed_trigger())
+        return value
+
+    # --- ENABLE PROPERTY HOOKS ---
     @enable.putter
     async def enable(self, instance, value):
         if isinstance(value, bytes):
@@ -82,23 +111,6 @@ class PVRow(PVGroup):
             await self.parent.trigger_logic(self.pv_name)
         asyncio.create_task(delayed_trigger())
         return clean_val
-
-    @low.putter
-    async def low(self, instance, value):
-        async def delayed_trigger():
-            await asyncio.sleep(0.05)
-            await self.parent.trigger_logic(self.pv_name)
-        asyncio.create_task(delayed_trigger())
-        return value
-
-    @high.putter
-    async def high(self, instance, value):
-        async def delayed_trigger():
-            await asyncio.sleep(0.05)
-            await self.parent.trigger_logic(self.pv_name)
-        asyncio.create_task(delayed_trigger())
-        return value
-
 
 class PVWatcherIOC(PVGroup):
     master_enable = pvproperty(
@@ -120,7 +132,15 @@ class PVWatcherIOC(PVGroup):
         self.previous_states = {pv: None for pv in target_pvs}
         
         for pv in target_pvs:
-            row = PVRow(pv_name=pv, parent=self)
+            pv_info = target_pvs[pv]
+
+            if isinstance(pv_info, dict):
+                init_low = float(pv_info.get('low', -1e9))
+                init_high = float(pv_info.get('high', 1e9))
+            else:
+                init_low, init_high = -1e9, 1e9
+
+            row = PVRow(pv_name=pv, parent=self, low_limit=init_low, high_limit=init_high)
             self.rows[pv] = row
             self.pvdb.update(row.pvdb)
 
@@ -269,6 +289,6 @@ if __name__ == "__main__":
         custom_prefix = CONFIG.get('prefix', 'MONITOR:')
         target_list = list(TARGET_PVS.keys()) if isinstance(TARGET_PVS, dict) else TARGET_PVS
         
-        ioc = PVWatcherIOC(target_pvs=target_list, prefix=custom_prefix)
+        ioc = PVWatcherIOC(target_pvs=TARGET_PVS, prefix=custom_prefix)
         logger.info(f"Starting PVwatcher with Prefix: {custom_prefix}")
         run(ioc.pvdb)

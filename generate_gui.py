@@ -59,8 +59,11 @@ def generate_main_bob(config_path='config.yaml', output_path='main.bob'):
         xml.append('  </widget>')
 
     y_offset = 110
-    # Because target_pvs is a dictionary now, we extract both the PV and the Description
-    for pv, desc in pvs.items():
+    # pv_info is now a dictionary holding 'desc', 'low', and 'high'
+    for pv, pv_info in pvs.items():
+        # Safely extract the description, with a fallback just in case
+        desc = pv_info.get('desc', 'No Desc') if isinstance(pv_info, dict) else pv_info
+        
         xml.append(f'  <widget type="template" version="2.0.0">')
         xml.append(f'    <file>row_template.bob</file><instances><instance><macros><PV>{pv}</PV><DESC>{desc}</DESC></macros></instance></instances>')
         xml.append(f'    <x>0</x><y>{y_offset}</y><width>800</width><height>40</height>')

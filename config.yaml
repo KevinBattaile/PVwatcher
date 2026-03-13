@@ -1,8 +1,22 @@
 prefix: "XF:19ID-MONITOR:"
 
 target_pvs:
-  "XF19IDC-ES{Rbt:1}LN2:Lvl-I": "Robot Dewar Level"
-  "SR:OPS-BI{DCCT:1}I:Real-I": "Ring Current"
+  "XF19IDC-ES{Rbt:1}LN2:Lvl-I": 
+    desc: "Robot Dewar Level"
+    low: 20
+    high: 60
+  "SR:OPS-BI{DCCT:1}I:Real-I": 
+    desc: "Ring Current"
+    low: 450
+    high: 510
+  "XF:19ID2:CS700:TEMP":
+    desc: "Cryostream Temp"
+    low: 95
+    high: 110
+  "XF:19IDC-ES{LLC:1}CH1:LEVEL_RBV":
+    desc: "Cryostream Dewar"
+    low: 30
+    high: 95
 
 slack_alerts:
         enabled: false
