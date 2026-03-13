@@ -3,3 +3,15 @@ prefix: "XF:19ID-MONITOR:"
 target_pvs:
   "XF19IDC-ES{Rbt:1}LN2:Lvl-I": "Robot Dewar Level"
   "SR:OPS-BI{DCCT:1}I:Real-I": "Ring Current"
+
+slack_alerts:
+        enabled: false
+        webhook_url: ""
+
+email_alerts:
+        enabled: false
+        smtp_server: ""
+        smtp_port: 25
+        sender: ""
+        recipients:
+                - "kbattaile@bnl.gov"
